@@ -364,9 +364,28 @@ impl<'de, 'a, R: ReadSlice<'de>> serde::Deserializer<'de> for &'a mut Deserializ
     fn deserialize_enum<V>(self, _name: &str, _variants: &[&str], visitor: V) -> Result<V::Value, Error>
         where V: Visitor<'de>
     {
-        match decode::read_map_len(&mut self.rd)? {
-            1 => visitor.visit_enum(VariantAccess::new(self)),
-            n => Err(Error::LengthMismatch(n as u32)),
+
+        let marker = rmp::decode::read_marker(&mut self.rd)?;
+
+        match marker {
+            Marker::FixPos(variant) =>
+                visitor.visit_enum(UnitVariantAccess::new(variant as u32)),
+            Marker::FixMap(1) =>
+                visitor.visit_enum(VariantAccess::new(self)),
+            Marker::U8  => {
+                let variant = rmp::decode::read_data_u8(&mut self.rd)?;
+                visitor.visit_enum(UnitVariantAccess::new(variant as u32))
+            }
+            Marker::U16 => {
+                let variant = rmp::decode::read_data_u16(&mut self.rd)?;
+                visitor.visit_enum(UnitVariantAccess::new(variant as u32))
+            }
+            Marker::U32 => {
+                let variant = rmp::decode::read_data_u32(&mut self.rd)?;
+                visitor.visit_enum(UnitVariantAccess::new(variant))
+            }
+            marker =>
+                Err(Error::TypeMismatch(marker)),
         }
     }
 
@@ -509,6 +528,111 @@ impl<'de, 'a, R: ReadSlice<'de>> de::VariantAccess<'de> for VariantAccess<'a, R>
         de::Deserializer::deserialize_tuple(self.de, fields.len(), visitor)
     }
 }
+
+struct UnitVariantAccess {
+    variant_idx: u32,
+}
+
+impl UnitVariantAccess {
+    pub fn new(variant_idx: u32) -> Self {
+        UnitVariantAccess { variant_idx }
+    }
+}
+
+impl<'de> de::EnumAccess<'de> for UnitVariantAccess {
+    type Error = Error;
+    type Variant = Self;
+
+    fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self), Error>
+        where V: de::DeserializeSeed<'de>,
+    {
+        use serde::de::IntoDeserializer;
+        let val: Result<_, Error> = seed.deserialize(self.variant_idx.into_deserializer());
+        Ok((val?, self))
+    }
+}
+
+impl<'de> de::VariantAccess<'de> for UnitVariantAccess {
+    type Error = Error;
+
+    fn unit_variant(self) -> Result<(), Error> {
+        Ok(())
+    }
+
+    fn newtype_variant_seed<V>(self, _seed: V) -> Result<V::Value, Error>
+    where
+        V: de::DeserializeSeed<'de>,
+    {
+        Err(Error::Uncategorized("expected a unit variant, got a newtype variant".into()))
+    }
+
+    fn tuple_variant<V>(self, _len: usize, _visitor: V) -> Result<V::Value, Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        Err(Error::Uncategorized("expected a unit variant, got a tuple variant".into()))
+    }
+
+    fn struct_variant<V>(self, _fields: &'static [&'static str], _visitor: V) -> Result<V::Value, Error>
+    where
+        V: de::Visitor<'de>,
+    {
+        Err(Error::Uncategorized("expected a unit variant, got a struct variant".into()))
+    }
+}
+
+
+// struct UnitVariantAccess<'a, R: 'a> {
+//     variant_idx: u32,
+// }
+
+// impl <'a, R: 'a> UnitVariantAccess<'a, R> {
+//     pub fn new(variant_idx: u32) -> Self {
+//         UnitVariantAccess { variant_idx }
+//     }
+// }
+
+// impl <'de, 'a, R: ReadSlice<'de>> de::EnumAccess<'de> for UnitVariantAccess<'a, R> {
+//     type Error = Error;
+//     type Variant = Self;
+
+//     fn variant_seed<V>(self, seed: V) -> Result<(V::Value, Self), Error>
+//         where V: de::DeserializeSeed<'de>,
+//     {
+//         use serde::de::IntoDeserializer;
+//         let val: Result<_, Error> = seed.deserialize(self.variant_idx.into_deserializer());
+//         Ok((val?, self))
+//     }
+// }
+
+// impl<'de, 'a, R: ReadSlice<'de>> de::VariantAccess<'de> for UnitVariantAccess<'a, R> {
+//     type Error = Error;
+
+//     fn unit_variant(self) -> Result<(), Error> {
+//         Ok(())
+//     }
+
+//     fn newtype_variant_seed<V>(self, _seed: V) -> Result<V::Value, Error>
+//     where
+//         V: de::DeserializeSeed<'de>,
+//     {
+//         Err(Error::Uncategorized("expected a unit variant, got a newtype variant".into()))
+//     }
+
+//     fn tuple_variant<V>(self, _len: usize, _visitor: V) -> Result<V::Value, Error>
+//     where
+//         V: de::Visitor<'de>,
+//     {
+//         Err(Error::Uncategorized("expected a unit variant, got a tuple variant".into()))
+//     }
+
+//     fn struct_variant<V>(self, _fields: &'static [&'static str], _visitor: V) -> Result<V::Value, Error>
+//     where
+//         V: de::Visitor<'de>,
+//     {
+//         Err(Error::Uncategorized("expected a unit variant, got a struct variant".into()))
+//     }
+// }
 
 /// Unification of both borrowed and non-borrowed reference types.
 #[derive(Clone, Copy, Debug, PartialEq)]

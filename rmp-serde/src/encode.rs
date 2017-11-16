@@ -419,10 +419,8 @@ where
     fn serialize_unit_variant(self, _name: &str, idx: u32, _variant: &str) ->
         Result<Self::Ok, Self::Error>
     {
-         // encode as a map from variant idx to an empty array, like: {idx => []}
-        encode::write_map_len(&mut self.wr, 1)?;
+        // encode as the variant idx
         self.serialize_u32(idx)?;
-        encode::write_array_len(&mut self.wr, 0)?;
         Ok(())
     }
 

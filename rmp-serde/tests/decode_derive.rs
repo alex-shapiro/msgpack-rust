@@ -104,7 +104,7 @@ fn pass_struct_from_map() {
 fn pass_unit_variant() {
     // We expect enums to be encoded as their variant idx
 
-    let buf = [0x81, 0x0, 0x90, 0x81, 0x1, 0x90];
+    let buf = [0x0, 0x1];
     let cur = Cursor::new(&buf[..]);
 
     #[derive(Debug, PartialEq, Deserialize)]
@@ -119,7 +119,7 @@ fn pass_unit_variant() {
 
     assert_eq!(enum_a , Enum::A);
     assert_eq!(enum_b , Enum::B);
-    assert_eq!(6, de.get_ref().position());
+    assert_eq!(2, de.get_ref().position());
 }
 
 #[test]
@@ -172,7 +172,7 @@ fn fail_enum_map_mismatch() {
     let err: Result<Enum, _> = rmps::from_slice(&buf);
 
     match err.unwrap_err() {
-        Error::LengthMismatch(2) => (),
+        Error::TypeMismatch(::rmp::Marker::FixMap(2)) => (),
         other => panic!("unexpected result: {:?}", other)
     }
 }
@@ -236,6 +236,53 @@ fn pass_newtype_variant() {
 
     assert_eq!(Enum::A(Newtype("le message".into())), actual);
     assert_eq!(buf.len() as u64, de.get_ref().position())
+}
+
+#[test]
+fn pass_untagged_enum() {
+    #[derive(Debug, PartialEq)]
+    // #[serde(untagged)]
+    enum Enum1 {
+        A(String),
+        B(Enum2),
+    }
+
+    #[derive(Debug, PartialEq, Deserialize)]
+    enum Enum2 {
+        C,
+        D(String),
+        E(u8, u8),
+    }
+
+    impl<'de> ::serde::Deserialize<'de> for Enum1 {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: ::serde::Deserializer<'de> {
+            use ::serde::de::Error;
+            use ::serde::private::de::{Content, ContentRefDeserializer};
+
+            let content = Content::deserialize(deserializer)?;
+            println!("Content: {:?}", content);
+
+            let state = String::deserialize(ContentRefDeserializer::<D::Error>::new(&content));
+            println!("Enum1::A result: {:?}", state);
+            if let Ok(state) = state {
+                return Ok(Enum1::A(state))
+            }
+
+            let state = Enum2::deserialize(ContentRefDeserializer::<D::Error>::new(&content));
+            println!("Enum1::B result: {:?}", state);
+            if let Ok(state) = state {
+                return Ok(Enum1::B(state))
+            }
+
+            Err(D::Error::custom("data did not match any variant of untagged enum Enum1"))
+        }
+    }
+
+    // let data1: Enum1 = rmps::from_slice(&[45]).unwrap();
+    let data2: Enum1 = rmps::from_slice(&[0x0]).unwrap();
+
+    // assert_eq!(data1, Enum1::A(45));
+    assert_eq!(data2, Enum1::B(Enum2::C));
 }
 
 #[cfg(disabled)]  // This test doesn't actually compile anymore
